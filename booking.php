@@ -7,15 +7,15 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-include 'Bdatabase.php'; 
+include 'Bdatabase.php';
 
-$user_id = $_SESSION['user_id']; // Get the logged-in user's ID
-$services = []; 
+$user_id = $_SESSION['user_id']; // Logged-in user's ID
+$services = [];
 $therapists = [];
-$availabilityStatus = ''; 
+$availabilityStatus = '';
 
-// Fetch services (for the dropdown selection)
-$serviceQuery = "SELECT service_id AS id, service_name AS name, price AS price FROM Services";
+// Fetch services (for dropdown selection)
+$serviceQuery = "SELECT service_id AS id, service_name AS name, price FROM Services";
 $serviceResult = $conn->query($serviceQuery);
 if ($serviceResult && $serviceResult->num_rows > 0) {
     while ($row = $serviceResult->fetch_assoc()) {
@@ -23,7 +23,7 @@ if ($serviceResult && $serviceResult->num_rows > 0) {
     }
 }
 
-// Fetch therapists (for the dropdown selection)
+// Fetch therapists (for dropdown selection)
 $therapistQuery = "SELECT user_id AS id, full_name AS name FROM Users WHERE role = 'therapist'";
 $therapistResult = $conn->query($therapistQuery);
 if ($therapistResult && $therapistResult->num_rows > 0) {
@@ -39,31 +39,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm'])) {
     $date = $_POST['date'];
     $time = $_POST['time'];
 
-    // Check therapist availability
-    $availabilityQuery = "SELECT * FROM Availability 
-                           WHERE therapist_id = ? 
-                           AND date = ? 
-                           AND start_time <= ? 
-                           AND end_time >= ?";
+    // Check therapist availability using Appointments table
+    $availabilityQuery = "
+        SELECT * FROM Appointments 
+        WHERE therapist_id = ? 
+        AND appointment_date = ? 
+        AND status = 'confirmed'
+        AND (
+            (start_time <= ? AND end_time > ?) OR
+            (start_time < ? AND end_time >= ?)
+        )";
     $stmt = $conn->prepare($availabilityQuery);
-    $stmt->bind_param('isss', $therapistId, $date, $time, $time);
+    $stmt->bind_param('isssss', $therapistId, $date, $time, $time, $time, $time);
     $stmt->execute();
     $result = $stmt->get_result();
 
     if ($result->num_rows > 0) {
-        // Insert booking into the database
-        $insertBookingQuery = "INSERT INTO Appointments (user_id, service_id, therapist_id, appointment_date, start_time) 
-                               VALUES (?, ?, ?, ?, ?)";
+        $availabilityStatus = 'The therapist is not available for this time slot.';
+    } else {
+        // Proceed with booking
+        $insertBookingQuery = "
+            INSERT INTO Appointments (user_id, service_id, therapist_id, appointment_date, start_time, end_time, status) 
+            VALUES (?, ?, ?, ?, ?, ?, 'pending')";
         $insertStmt = $conn->prepare($insertBookingQuery);
-        $insertStmt->bind_param('iiiss', $user_id, $serviceId, $therapistId, $date, $time);
+        $endTime = date('H:i:s', strtotime($time) + 60 * 60); // Example: 1-hour duration
+        $insertStmt->bind_param('iiisss', $user_id, $serviceId, $therapistId, $date, $time, $endTime);
 
         if ($insertStmt->execute()) {
             $availabilityStatus = 'Appointment successfully booked!';
         } else {
             $availabilityStatus = 'Error booking appointment. Please try again later.';
         }
-    } else {
-        $availabilityStatus = 'The therapist is not available for this time slot.';
     }
 }
 ?>
